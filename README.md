@@ -1,303 +1,232 @@
-# Crypto_Project
-TLS Handshake with PAKE
+# TLS-OPAQUE Secure Authentication
 
-Introduction
-In this project, I worked on enhancing the TLS 1.3 handshake by integrating a password-authenticated key exchange (PAKE) protocol, specifically a simplified OPAQUE-based HMAC construction. My goal was to authenticate clients based on their password-derived secret without ever sending the password in cleartext, while still leveraging TLS’s proven record-layer confidentiality, integrity, and replay protections.
+Password-Authenticated TLS Handshake using a Simplified OPAQUE Construction
 
+---
 
-System Architecture
-To keep the design clear,  and easy to extend, I split the functionality into separate processes and helper modules:
+# Overview
 
-Client Process
+This project demonstrates how a **Password-Authenticated Key Exchange (PAKE)** protocol can be integrated into a **TLS-protected communication channel**.
 
+The implementation enhances the TLS 1.3 handshake by introducing a simplified **OPAQUE-style authentication mechanism**. Instead of transmitting passwords, both client and server derive a shared secret using a password-based **Oblivious Pseudo-Random Function (OPRF)**.
 
-What I did:
+The resulting secret is expanded using **HKDF-SHA256** and used to protect application messages via **AES-GCM authenticated encryption**.
 
+The system illustrates how password authentication can be securely layered on top of TLS without exposing passwords to the network.
 
-I opened a TCP socket to the server’s port 9000.
+---
 
+# Architecture
 
-Wrapped it in a TLS 1.3 context to secure transport and verify the server’s certificate.
+The system is composed of the following components:
 
+Client
+• Establishes a TLS connection to the server
+• Executes the PAKE login protocol
+• Derives symmetric keys from the shared secret
+• Encrypts application messages with AES-GCM
 
-Called opaque_set.login(password) to perform the PAKE exchange over the encrypted channel.
+Server
+• Accepts TLS connections from clients
+• Performs PAKE verification using the password
+• Reconstructs the shared secret
+• Decrypts and processes client messages
 
+Supporting modules
 
-Fed the resulting shared secret into kdf_utils.derive_keys() to get separate handshake and application keys.
+**opaque_set.py**
+Implements a simplified OPRF using HMAC to simulate the OPAQUE protocol.
 
+**kdf_utils.py**
+Uses HKDF-SHA256 to derive handshake and application keys.
 
-Encrypted an application message with AES-GCM and sent it through the TLS socket.
+**cert_utils.py**
+Generates and manages self-signed TLS certificates.
 
+---
 
+# Protocol Flow
 
+The authentication and message exchange process follows these steps:
 
+1. Client opens a TCP connection to the server.
+2. TLS 1.3 handshake is performed.
+3. Server presents its certificate.
+4. Client verifies the certificate.
+5. Client performs PAKE login using its password.
+6. Server reproduces the shared secret using the same password.
+7. Both sides derive encryption keys via HKDF.
+8. Client encrypts the application message with AES-GCM.
+9. Server decrypts the message and processes it.
 
-Server Process
+---
 
+# Security Properties
 
-What I did:
-
-
-Listened for TCP connections on port 9000.
-
-
-Loaded a self-signed certificate and private key via cert_utils.py into its TLS context.
-
-
-Wrapped incoming connections in TLS, enforcing client verification of the server’s certificate (CERT_REQUIRED).
-
-
-Ran opaque_set.register()/login() to reproduce the shared secret with the client.
-
-
-Derived identical keys, decrypted the incoming AES-GCM payload, and processed the message.
-
-
-
-OPAQUE Module
-
-
-Purpose: Implements a stub HMAC-based OPRF to simulate OPAQUE’s blind/unblind without exposing passwords.
-
-
-What I did: I wrote a register(password) and login(password) that both compute HMAC(SERVER_OPRF_KEY, password).
-
-
-Why: Although this stub omits true OPRF blinding steps, it illustrates how OPAQUE prevents password leakage. In a production setting, I would replace it with a full OPAQUE library supporting randomized blinding and zero-knowledge proofs.
-
-
-
-Key Derivation Module
-
-
-Purpose: Transforms the PAKE shared secret into cryptographically strong keys.
-
-
-What I did: Used HKDF-SHA256 (cryptography.hazmat.primitives.kdf.hkdf.HKDF) to extract and expand 64 bytes, then split into two 32-byte keys (handshake vs. application).
-
-
-Why split keys? Following the key separation principle, using distinct keys for different protocol phases prevents cross-protocol attacks and limits exposure if one key is compromised.
-
-
-
-Certificate Utility
-
-
-Purpose: Generates and manages self-signed RSA certificates.
-
-
-What I did: Built a 2048-bit RSA key and X.509 certificate builder, signed it at runtime, and provided functions to write them to disk and load them into TLS contexts.
-
-
-Why self-signed? To simplify trust in a closed environment without a PKI, I pinned the certificate on the client as a trust anchor.
-
-
-
-Transport Layer 
-
-
-Purpose: Provides confidentiality, integrity, and replay protection for all PAKE and application messages.
-
-
-What I did: Configured TLS 1.3 contexts on both client (for server authentication) and server (for secure transport), using Python’s standard library.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Security Intuition & Threat Model
-Before implementation, I considered an adversary capable of:
-Passive eavesdropping: Observing all network traffic.
-
-
-Active MITM attacks: Intercepting, modifying, or injecting messages.
-
-
-Server compromise: Server private key remains secure; if the server process is compromised, password secrecy relies on OPRF.
-
-How each layer addresses these threats:
-Secrecy
-
-
-TLS 1.3: Encrypts all PAKE handshake tokens and application data, foiling passive eavesdroppers.
-
-
-AES-GCM: Ensures per-message confidentiality with a fresh 12-byte nonce, preventing replay.
-
+Confidentiality
+TLS 1.3 encrypts all communication between client and server.
 
 Integrity
+TLS record authentication and AES-GCM tags ensure messages cannot be modified.
 
-
-TLS Record MACs: Guarantee transport-layer integrity any tampering is detected before application code runs.
-
-
-AES-GCM Tags: Authenticate ciphertexts so recipients reject any modified data.
-
-
-Authenticity
-
-
-Server: Clients verify a pinned self-signed certificate, ensuring they talk to the genuine server and not an MITM.
-
-
-Client: OPAQUE’s OPRF binds authentication to a password only a holder of the correct password can derive the shared secret, without sending the password itself.
-
+Authentication
+Server identity is verified through certificate pinning.
+Client authentication is achieved through password-based PAKE.
 
 Forward Secrecy
+TLS 1.3 ephemeral Diffie-Hellman ensures session keys cannot be recovered even if long-term secrets are compromised.
 
+---
 
-TLS Ephemeral DH: Provides forward secrecy out-of-the-box in TLS 1.3.
+# Repository Structure
 
+```
+tls-opaque-authentication
+│
+├── client.py
+├── server.py
+│
+├── opaque_set.py
+├── kdf_utils.py
+├── cert_utils.py
+│
+├── images
+│   ├── architecture.png
+│   └── protocol_flow.png
+│
+└── README.md
+```
 
+---
 
+# Installation
 
+### Requirements
 
+Python 3.10+
 
-Handshake & Implementation Details
+Install dependencies
 
-This is the walk through, the end-to-end handshake flow which also highlights key code excerpts:
-3.1. Full Handshake Sequence
-Client: sock = socket.create_connection((host, 9000))
+```
+pip install cryptography
+```
 
+---
 
-Client: tls_sock = client_ctx.wrap_socket(sock, server_hostname=host)
+# Running the Demo
 
+Start the server
 
-TLS 1.3 handshake completes: server certificate validated.
+```
+python server.py
+```
 
+Expected output
 
-Client: shared = opaque_set.login(password)
+```
+Listening on 127.0.0.1:9000 (TLS enabled)
+```
 
+Run the client
 
-OPRF-based PAKE exchange runs over the encrypted channel.
+```
+python client.py
+```
 
+Enter the password
 
-Client: (k_handshake, k_app) = kdf_utils.derive_keys(shared)
+```
+Crypto25
+```
 
+The client performs the PAKE handshake and sends an encrypted message.
 
-HKDF-SHA256 extracts and expands the shared secret.
+The server will display
 
+```
+Received message: Hello secure world
+```
 
-Client: nonce = os.urandom(12)
- ciphertext = AESGCM(k_app).encrypt(nonce, b"Hello, secure world!", None)
- tls_sock.send(nonce + ciphertext)
+confirming successful authentication and secure communication.
 
+---
 
-The application message is protected end-to-end.
+# Key Implementation Components
 
+## OPAQUE Module
 
-Server: raw_conn, addr = sock.accept()
+The PAKE exchange uses a simplified OPRF implemented with HMAC:
 
+```
+shared_secret = HMAC(server_key, password)
+```
 
-Server: tls_conn = server_ctx.wrap_socket(raw_conn, server_side=True)
+This demonstrates the concept of OPAQUE without implementing full blinding and zero-knowledge proofs.
 
+---
 
-Server completes TLS handshake with client.
+## Key Derivation
 
+The shared secret is expanded using HKDF-SHA256:
 
-Server: shared = opaque_set.login(password)
+```
+HKDF(shared_secret) → 64 bytes
+```
 
+The output is split into two keys:
 
-Server computes identical PAKE secret.
+• handshake_key
+• application_key
 
+This follows the **key separation principle**.
 
-Server: (k_handshake, k_app) = kdf_utils.derive_keys(shared)
+---
 
+## Authenticated Encryption
 
-Derives matching application key.
+Application messages are encrypted with AES-GCM:
 
+```
+ciphertext = AESGCM(key).encrypt(nonce, message)
+```
 
-Server: received = tls_conn.recv()
- nonce, ciphertext = received[:12], received[12:]
- plaintext = AESGCM(k_app).decrypt(nonce, ciphertext, None)
+AES-GCM provides both confidentiality and integrity.
 
+---
 
-The server decrypts and processes the application payload.
+# Threat Model
 
+The design considers attackers capable of:
 
-3.2. Key Code Excerpts
+Passive network monitoring
+Active man-in-the-middle attacks
+Message tampering and replay attempts
 
-# opaque_set.py
-import hmac, hashlib
-SERVER_OPRF_KEY = b"supersecret"
+Security is ensured through:
 
-def register(password: bytes) -> bytes:
-    return hmac.new(SERVER_OPRF_KEY, password, hashlib.sha256).digest()
+• TLS encrypted transport
+• PAKE-based password authentication
+• AES-GCM authenticated encryption
+• certificate verification
 
-def login(password: bytes) -> bytes:
-    return register(password)
-# HMAC simulates OPAQUE’s blind/unblind; real OPAQUE adds randomness and proofs.
+---
 
+# Future Improvements
 
+• Integrate a full OPAQUE protocol implementation
+• Add multi-user password registration
+• Support session resumption
+• Formal verification using tools such as Tamarin or ProVerif
+• Extend to mutual TLS authentication
 
+---
 
+# Author
 
-# kdf_utils.py
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.hashes import SHA256
+Shristi
+MS Computer Science
+Arizona State University
 
-def derive_keys(shared_secret: bytes):
-    hkdf = HKDF(algorithm=SHA256(), length=64, salt=None, info=b"tls-pake")
-    full_key = hkdf.derive(shared_secret)
-    return full_key[:32], full_key[32:]
-# Splitting keys enforces key separation: compromising one key won’t break the other.
+---
 
-
-# cert_utils.py 
-from cryptography import x509
-# Generate key & self-signed cert
-cert = x509.CertificateBuilder().sign(private_key, hashes.SHA256())
-
-# client side:
-ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-ctx.load_verify_locations(cafile="server_cert.pem")
-# Pinning the cert avoids PKI complexity in a closed test environment.
-
-Testing & Verification
-To validate my design, I wrote unit tests that ensure:
-Wrong passwords fail cleanly: A login attempt with the wrong password produces a different shared secret, causing AES-GCM decryption to raise an exception without leaking timing.
-
-
-Tampering detection: Modifying TLS records or the AES-GCM ciphertext triggers errors.
-
-
-Certificate rejection: Clients reject connections if the server’s certificate isn’t in their trusted store.
-
-
-These tests confirm resilience against both passive and active network adversaries.
-
-Execution & Usage
-To try out this TLS‑PAKE demo on your machine this is the process:
-
-Open the project in VS Code.
-Navigate to the folder containing server.py, client.py, and the helper modules.
-Launch the server.
-Open a new terminal in VS Code.
-Run: python server.py
-You should see output like: Listening on 127.0.0.1:9000 (TLS enabled).
-Launch the client.
-Open a second terminal in VS Code.
-Run: python client.py
-Enter the password.
-When prompted, type: Crypto25
-Press Enter.
-Observe the exchange.
-The client will perform the PAKE handshake over TLS, derive keys, and send an encrypted message.
-The server terminal will display the decrypted message, confirming that the end‑to‑end pipeline works.
-This quick start ensures you can verify both the TLS layer and the PAKE‑based authentication in under a minute.
-
- Conclusion
-I successfully replaced TLS’s Diffie–Hellman handshake with a PAKE-based flow, preserving strong secrecy, integrity, authenticity, and forward secrecy. By splitting keys via HKDF, using AES-GCM for authenticated encryption, and pinning a self-signed certificate, I met all project requirements and demonstrated a clear path to a full OPAQUE integration in future work. This modular, multi-process design makes it straightforward to swap in a production-grade OPAQUE library or formally verify the protocol in a tool like Tamarin.
-
+TLS-OPAQUE Secure Authentication Prototype
